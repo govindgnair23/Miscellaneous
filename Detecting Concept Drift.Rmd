@@ -1,0 +1,331 @@
+---
+title: "Detecting Concept Drift"
+author: "Govind Nair"
+date: "2/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Concept drift refers to changes in the joint distribution of of an instance $X$ and its class $y$
+
+$$ P(X,y) = P(X)P(y|X)$$
+
+Concept drift can therefore be caused by a change in any of the two terms in the right side of the equation above.
+
+If the drift is only due to a change in $P(X)$, it means the distribution of the incoming data has changed but the decision boundary remains unaffected, this is referred to as **virtual drift**. Virtual drift does not lead to deterioration in model performance.
+
+If the drift is due to a change in $P(y|X)$,this affects the decision boundary of the model which in turn affects the performance of the model. This is referred to as **real drift**.
+
+When ML models are deployed in production, it is essential to detect real drift so that remedial action can be taken.
+
+The figure below gives an example of the original data and data resulting from real and virtual drift.
+
+
+
+```{r , warning=FALSE, message=FALSE , echo = FALSE}
+
+set.seed(0)
+N <- 50
+# Using polar coordinates
+r1<- runif(N,0,0.15)
+theta1 <- runif(N,0,2*pi)
+r2 <- runif(N,0,0.15)
+theta2 <- runif(N,0,2*pi)
+
+#Original data 
+region1 <- cbind(r1 * cos(theta1) + 0.75, r1 * sin(theta1) + 0.25)
+region2 <- cbind(r2 * cos(theta2) + 0.25, r2* sin(theta2) + 0.75)
+
+data <- rbind(region1,region2)
+data_df1 <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+
+
+#Virtual drift
+region1 <- cbind(r1 * cos(theta1) + 0.75, r1 * sin(theta1) + 0.75)
+region2 <- cbind(r2 * cos(theta2) + 0.25, r2 * sin(theta2) + 0.25)
+
+data <- rbind(region1,region2)
+data_df2 <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+
+#Real drift
+region1 <- cbind(r1 * cos(theta1) + 0.5, r1 * sin(theta1) + 0.75)
+region2 <- cbind(r2 * cos(theta2) + 0.5, r2 * sin(theta2) + 0.25)
+
+data <- rbind(region1,region2)
+data_df3 <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+
+
+par(mfrow=c(1,3))
+plot(data_df1$X1,data_df1$X2,col=data_df1$class,pch =16,xlab='X1',ylab='X2',main = "Original Data")
+abline( v = 0.5,col='blue')
+
+plot(data_df2$X1,data_df2$X2,col=data_df2$class,pch =16,xlab='X1',ylab='X2',main = "Virtual Drift")
+abline( v = 0.5,col='blue')
+
+plot(data_df3$X1,data_df3$X2,col=data_df2$class,pch =16,xlab='X1',ylab='X2',main = "Real Drift")
+abline( v = 0.5,col='blue')
+
+```
+
+
+## Drift Detection in AML
+
+Drift detection can be supervised; this requires that we know the ground truth labels to evaluate the performance of the classifier; or unsupervised where it is not necessary to know the ground truth labels.
+
+Given there is often a significant delay in getting the ground truth labels in AML, the unsupervised method is preferable. The intent of using concept drift detection in AML is to understand any changes that might negatively impact model performance as early as possible so that model risk can be mitigated. 
+
+There are broadly three types of unsupervised drift detection methods.
+
+1) Novelty detection/clustering methods
+2) Multivariate Distribution Monitoring
+3) Model Dependent Monitoring
+
+
+Method 1 is not suitable for binary classification, it is typically used in multi class classification problems where the data generating process can give rise to new classes that have not been considered hitherto.
+
+Method 2 may not be suitable where the data is highly imbalanced such as in AML. Given one class of labels are in the minority, changes in the distribution of this class typically does not impact the overall distribution of data.
+
+Further both these methods assume that any change in the data distribution i.e. $P(X)$ also causes a change in the performance of the classifier i.e. $P(Y|X)$, this can often leads to a lot of false positives.Therefore we will focus primarily on the model based methods.
+
+1) Confidence Distribution Batch Detection (CDBD)
+2) Margin Density (MD)
+
+### CDBD
+
+This is an approach that works for probabilistic classifiers by comparing the distribution of predicted scores in a test batch with that of a reference batch. The reference batch is typically the batch of instances classified immediately after the model has been trained while the test batches are data sets from some appropriate recurring time window e.g. 1 month.
+
+The distributions are compared after discretizing them and then using a measure such as the Kullback Leibler Divergence. The measures for the test batches are compared to an appropriately chosen threshold which is derived from the reference batch.If x out of the last y test batches (e.g. 3/5) triggers the threshold, then model drift is said to have occurred. Note that in the experiment below, the distributions were not discretized.
+
+In order to create the threshold for comparison,the distribution divergence of each of the first n test batches immediately after the reference batch and the reference batch itself are calculated. The threshold is set to one standard deviation above the mean of these divergences.
+
+
+
+### MD
+
+Margin is the portion of the prediction space most vulnerable to misclassification. The Margin Density metric is motivated by the idea that a significant change in the density of instances occurring in a classifier's margin is indicative of concept drift.
+
+Margin Density is defined as follows.
+
+$$MD = \frac{\Sigma S_E(x)}{|X|}; \forall x \epsilon X  $$
+
+where
+
+
+$$S_E(x) =  \begin{cases} 1, \text{if}&|p(y ==+1|x) - p(y == -1|x)|   \leq \theta_{margin} \\
+                                          0, & otherwise  \end{cases} $$
+                                          
+                                          
+                                          
+
+The absolute value of the  change in marginal density $|\Delta MD|$  for each new batch of data in relation  to the reference batch is measured, if this exceeds some threshold, this is indicative of concept drift.
+
+
+$$ if |MD_t - MD_{Ref}| \gt MD_{threshold} \implies \text{Drift suspected} ) $$
+The threshold can be learned from the training data set using K-fold cross validation. It can be the mean plus N standard deviations.
+
+
+## Experiment
+
+### Data
+
+Simulated data will be used  same as before.The original data and drifted data are as follows. 
+
+
+```{r , echo =FALSE}
+set.seed(0)
+N <- 50
+# Using polar coordinates
+r1<- runif(N,0,0.15)
+theta1 <- runif(N,0,2*pi)
+r2 <- runif(N,0,0.15)
+theta2 <- runif(N,0,2*pi)
+
+#Original data 
+region1 <- cbind(r1 * cos(theta1) + 0.55, r1 * sin(theta1) + 0.5)
+region2 <- cbind(r2 * cos(theta2) + 0.35, r2* sin(theta2) + 0.5)
+data <- rbind(region1,region2)
+data_df1 <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+#Drifted Data 1
+region1 <- cbind(r1 * cos(theta1) + 0.5, r1 * sin(theta1) + 0.5)
+region2 <- cbind(r2 * cos(theta2) + 0.5, r2* sin(theta2) + 0.5)
+data <- rbind(region1,region2)
+data_df2 <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+
+#Drifted Data 2
+region1 <- cbind(r1 * cos(theta1) + 0.5, r1 * sin(theta1) + 0.35)
+region2 <- cbind(r2 * cos(theta2) + 0.5, r2* sin(theta2) + 0.55)
+data <- rbind(region1,region2)
+data_df3 <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+
+#Drifted Data 3
+region1 <- cbind(r1 * cos(theta1) + 0.5, r1 * sin(theta1) + 0.55)
+region2 <- cbind(r2 * cos(theta2) + 0.5, r2* sin(theta2) + 0.35)
+data <- rbind(region1,region2)
+data_df4 <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+
+
+par(mfrow=c(2,2))
+plot(data_df1$X1,data_df1$X2,col=data_df1$class,pch =16,xlab='X1',ylab='X2',main = "Original Data",
+     xlim = c(0,1),ylim=c(0,1))
+plot(data_df2$X1,data_df2$X2,col=data_df2$class,pch =16,xlab='X1',ylab='X2',main = "Drifted Data 1",
+     xlim = c(0,1),ylim=c(0,1))
+plot(data_df3$X1,data_df3$X2,col=data_df3$class,pch =16,xlab='X1',ylab='X2',main = "Drifted Data 2",
+     xlim = c(0,1),ylim=c(0,1))
+plot(data_df4$X1,data_df4$X2,col=data_df4$class,pch =16,xlab='X1',ylab='X2',main = "Drifted Data 3",
+     xlim = c(0,1),ylim=c(0,1))
+
+```
+
+
+### Analysis
+
+A model is fit to the original data , the resulting decision boundary is shown below.
+
+```{r}
+glm1 <- glm(class ~ ., data = data_df1,family = 'binomial')
+#Grid for getting predictions
+grid <- expand.grid(X1=seq(0,1,by=0.01),X2= seq(0,1,by=0.01))
+grid_preds <- predict(glm1,newdata=grid,type='response')
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =101),levels=0.5,
+        col="cornflowerblue",lwd=2,drawlabels=FALSE)
+points(data_df1$X1,data_df1$X2,col=data_df1$class,pch = 16)
+
+```
+
+
+#### CDBD
+
+
+We assume that the data distribution for the first 5 test batches are identical to the reference batch. Five batches of test data are therefore generated from the same distribution.
+
+```{r cars}
+##Function to generate reference data
+
+generate_data <- function(seed,N){
+  
+set.seed(seed)
+N <- N
+# Using polar coordinates
+r1<- runif(N,0,0.15)
+theta1 <- runif(N,0,2*pi)
+r2 <- runif(N,0,0.15)
+theta2 <- runif(N,0,2*pi)
+
+#Original data 
+region1 <- cbind(r1 * cos(theta1) + 0.55, r1 * sin(theta1) + 0.5)
+region2 <- cbind(r2 * cos(theta2) + 0.35, r2* sin(theta2) + 0.5)
+data <- rbind(region1,region2)
+data_df <- data.frame(data,class=as.factor(c(rep(1,N),rep(2,N)))) 
+  
+return(data_df)  
+}
+
+test_data <- lapply(c(1:5),generate_data,50)
+
+```
+
+The predictions of the model on the test data sets are as follows
+
+```{r}
+test_data <- do.call(rbind,test_data)
+test_preds <- predict(glm1,newdata=test_data,type='response')
+test_preds_list <- split(test_preds,rep(c(1,2,3,4,5),each=100))
+#predictions on original data
+original_preds <- predict(glm1,type='response')
+```
+
+
+
+The KL divergence of the original distribution with respect to the five test distributions are calculated below
+
+```{r ,warning=FALSE, message=FALSE}
+library(LaplacesDemon)
+KL_divergence <- rep(NA,5)
+for (i in c(1:5)){
+  KL_divergence[i] <- KLD(original_preds,test_preds_list[[i]])$sum.KLD.px.py  
+}
+
+```
+
+
+The thresholds for comparison is given by the mean + 1 SD
+
+```{r}
+kl_threshold = mean(KL_divergence) + sd(KL_divergence)
+cat(paste0('The kl_threshold is',round(kl_threshold,3)))
+```
+Now the kl divergence with respect to each of the drifted data sets are computed.
+```{r}
+drifted_data <- list(data_df2,data_df3,data_df4)
+KL_divergence_drift <- rep(NA,3)
+drifted_preds <- list()
+for (i in c(1:3)){
+  
+  preds <- predict(glm1,newdata = drifted_data[[i]],type='response')
+  drifted_preds[[i]] <- preds
+  KL_divergence_drift[i] <- KLD(original_preds,preds)$sum.KLD.px.py  
+  
+}
+```
+
+All three drifted data sets violate the threshold.
+```{r}
+print(KL_divergence_drift)
+print(KL_divergence_drift>kl_threshold)
+```
+
+
+#### MD
+
+Given the simulated data used here is balanced, the range of predictions indicating uncertainty in prediction can be considered to be  anything between 0.25 and  0.75. This corresponds to $\theta = 0.5$.
+
+Although CV can be used, given we are working with simulated data, the margin density of the original data and five test data sets are computed.
+
+
+```{r}
+margin_density_fn <- function(predictions,theta){
+  margin <- abs(predictions - (1-predictions))
+  margin_flag <- margin <= theta
+  margin_density <- mean(margin_flag)
+  return(margin_density) 
+}
+
+preds_list <-test_preds_list
+preds_list[[6]] <- original_preds
+md <- sapply(preds_list,margin_density_fn,0.5)
+md_threshold <- mean(md) + sd(md)
+
+cat(paste0('The margin density threshold is ',round(md_threshold,3)))
+```
+
+The margin density of the drifted data sets are now computed. It can be seen that all three drifted data sets exceed the threshold
+
+```{r}
+print(md_drifted <- sapply(drifted_preds,margin_density_fn,0.5))
+print(md_drifted > md_threshold)
+```
+
+## Conclusion
+
+Both these techniques are promising in their ability to detect concept drift without requiring ground truth labels
+
+
+## Limitations
+
+1)These techniques are able to detect drift only when concept drift occurs with respect to one or more  parameters in the model. If concept drift occurs due to a variable which is not part of the model becoming significant, these techniques will not be effective. Ground truth labels and accuracy metrics will be necessary to detect such drift.
+
+2) When the dataset is imbalanced, the threshold $\theta_margin$ will have to be adjusted appropriately.
+
+
+## References
+
+1) Drift Detection Using Uncertainty Distribution Divergence [link](https://arrow.tudublin.ie/cgi/viewcontent.cgi?article=1028&context=scschcomart)
+2) On the Reliable Detection og Conceot Drift from Straming Unlabeled Data [link](https://arxiv.org/abs/1704.00023)
+3) MCDiarmid Drift Detection Methods for Evolving Streams[link](https://arxiv.org/abs/1710.02030)
+
+
