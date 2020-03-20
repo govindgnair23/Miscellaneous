@@ -1,0 +1,193 @@
+---
+title: "Impact of Rebalancing Imbalanced Data"
+author: "Govind Nair"
+date: "3/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This post looks at the impact of rebalancing an imbalanced dataset and seeks to identify some heuristics/rules of thumb to determine when it is appropriate to rebalance an imabalanced dataset through oversampling/undersampling.
+
+
+
+
+## Case 1: When your model is a good fit for your data
+
+### Original Data
+Consider the true data you are working with below which appears to be linearly seperable. The data is imbalanced with a ratio of 1:4.
+
+```{r, echo=FALSE}
+set.seed(0)
+c1 <- cbind('x1'=rnorm(20,0.6,0.12),'x2'=rnorm(20,0.4,0.15))
+c2 <- cbind('x1'=rnorm(80,0.4,0.12),'x2'=rnorm(80,0.6,0.15))
+original_data <- data.frame(rbind(c1,c2))
+original_data$y <- as.factor(c(rep(1,20),rep(0,80)))
+```
+
+The data and the decision boundary from the simple logistic regression model built on the data is shown below.
+The decision boundary corresponds to a contour where the porbability of the minority class = 0.2.
+
+```{r}
+glm1 <- glm(y ~ ., data = original_data, family = 'binomial')
+summary(glm1)
+```
+
+
+The plot the data and the deicision boundary along with the 95% prediction intervals are shown below.
+
+```{r}
+grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
+grid_preds <- predict(glm1,newdata=grid,type='response')
+
+preds_ci <-  predict(glm1,newdata=grid,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds_ci$fit + (critval * preds_ci$se.fit)
+lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
+
+
+
+#These are logits, use inverse link function to get probabilties
+upr2 <- glm1$family$linkinv(upr)
+lwr2 <- glm1$family$linkinv(lwr)
+
+
+
+nrow <- length(seq(0,1,by=0.01))
+plot(original_data$x1,original_data$x2,col=original_data$y,pch = 16,xlab='x1',ylab='x2',main = 'Original Data')
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.2,
+        col="cornflowerblue",lwd=2,drawlabels=FALSE,add=TRUE)
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(upr2,nrow =nrow),levels=0.2,
+        col="green",lwd=2,drawlabels=FALSE,add=TRUE,lty=2)
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(lwr2,nrow =nrow),levels=0.2,
+        col="green",lwd=2,drawlabels=FALSE,add = TRUE,lty=2)
+
+```
+
+
+### Oversampled Data
+
+Now we oversample the minority class.
+
+```{r}
+
+minority_class <- subset(original_data,original_data$y==1)
+majority_class <- subset(original_data,original_data$y==0)
+oversamples <- minority_class[sample(c(1:nrow(minority_class)),60,replace = TRUE),]
+oversampled_data <- rbind(oversamples,minority_class,majority_class)
+```
+
+A second model is fitted on the oversampled data.
+```{r}
+glm2 <- glm(y ~ ., data = oversampled_data, family = 'binomial')
+summary(glm2)
+
+```
+
+The plot is shown below with a 95% confidence limits.
+
+```{r}
+grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
+grid_preds <- predict(glm2,newdata=grid,type='response')
+
+preds_ci <-  predict(glm2,newdata=grid,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds_ci$fit + (critval * preds_ci$se.fit)
+lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
+
+
+
+#These are logits, use inverse link function to get probabilties
+
+upr2 <- glm1$family$linkinv(upr)
+lwr2 <-glm1$family$linkinv(lwr)
+
+nrow <- length(seq(0,1,by=0.01))
+plot(oversampled_data$x1,oversampled_data$x2,col=oversampled_data$y,pch = 16,xlab='x1',ylab='x2',main='Oversampled data')
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.5,
+        col="cornflowerblue",lwd=2,drawlabels=FALSE,add=TRUE)
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(upr2,nrow =nrow),levels=0.5,
+        col="green",lwd=2,drawlabels=FALSE,add=TRUE,lty=2)
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(lwr2,nrow =nrow),levels=0.5,
+        col="green",lwd=2,drawlabels=FALSE,add = TRUE,lty=2)
+```
+
+## Case 2: When your model is not a good fit for your data
+
+Now consider the case when the model is not a good fit for the data.
+
+### Original Data
+
+```{r}
+set.seed(0)
+c1 <- cbind('x1'=c(rnorm(10,0.6,0.15),rnorm(10,0.2,0.15)),'x2'=c(rnorm(10,0.4,0.15),rnorm(10,0.8,0.15)))
+c2 <- cbind('x1'=rnorm(80,0.4,0.15),'x2'=rnorm(80,0.6,0.15))
+
+original_data2 <- data.frame(rbind(c1,c2))
+original_data2$y <- as.factor(c(rep(1,20),rep(0,80)))
+
+```
+
+
+A model is fitted on the original data.
+```{r}
+glm3 <- glm(y ~ ., data = original_data2, family = 'binomial')
+summary(glm3)
+
+```
+
+
+The plot is shown below
+
+```{r}
+grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
+grid_preds <- predict(glm3,newdata=grid,type='response')
+
+
+
+nrow <- length(seq(0,1,by=0.01))
+plot(original_data2$x1,original_data2$x2,col=original_data2$y,pch = 16,xlab='x1',ylab='x2',main='Original Data')
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.2,
+        col="cornflowerblue",lwd=2,drawlabels=FALSE,add=TRUE)
+
+```
+
+
+### Oversampled Data
+
+Now we oversample the minority class.
+
+```{r}
+
+minority_class <- subset(original_data2,original_data2$y==1)
+majority_class <- subset(original_data2,original_data2$y==0)
+oversamples <- minority_class[sample(c(1:nrow(minority_class)),60,replace = TRUE),]
+oversampled_data2 <- rbind(oversamples,minority_class,majority_class)
+```
+
+A second model is fitted on the oversampled data.
+```{r}
+glm4 <- glm(y ~ ., data = oversampled_data2, family = 'binomial')
+summary(glm4)
+
+```
+
+
+The plot is shown below
+
+```{r}
+grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
+grid_preds <- predict(glm4,newdata=grid,type='response')
+nrow <- length(seq(0,1,by=0.01))
+contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.5,
+        col="cornflowerblue",lwd=2,drawlabels=FALSE)
+points(oversampled_data2$x1,oversampled_data2$x2,col=oversampled_data2$y,pch = 16)
+```
