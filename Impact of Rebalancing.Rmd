@@ -11,8 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Introduction
 
-This post looks at the impact of rebalancing an imbalanced dataset and seeks to identify some heuristics/rules of thumb to determine when it is appropriate to rebalance an imabalanced dataset through oversampling/undersampling.
-
+This post looks at the impact of rebalancing an imbalanced dataset and seeks to identify some heuristics/rules of thumb to determine when it is appropriate to rebalance an imabalanced dataset through oversampling.
 
 
 
@@ -23,14 +22,14 @@ Consider the true data you are working with below which appears to be linearly s
 
 ```{r, echo=FALSE}
 set.seed(0)
-c1 <- cbind('x1'=rnorm(20,0.6,0.12),'x2'=rnorm(20,0.4,0.15))
-c2 <- cbind('x1'=rnorm(80,0.4,0.12),'x2'=rnorm(80,0.6,0.15))
+c1 <- cbind('x1'=rnorm(200,0.6,0.12),'x2'=rnorm(200,0.4,0.15))
+c2 <- cbind('x1'=rnorm(800,0.4,0.12),'x2'=rnorm(800,0.6,0.15))
 original_data <- data.frame(rbind(c1,c2))
-original_data$y <- as.factor(c(rep(1,20),rep(0,80)))
+original_data$y <- as.factor(c(rep(1,200),rep(0,800)))
 ```
 
 The data and the decision boundary from the simple logistic regression model built on the data is shown below.
-The decision boundary corresponds to a contour where the porbability of the minority class = 0.2.
+The decision boundary corresponds to a contour where the proability of the minority class = 0.2.
 
 ```{r}
 glm1 <- glm(y ~ ., data = original_data, family = 'binomial')
@@ -38,10 +37,11 @@ summary(glm1)
 ```
 
 
-The plot the data and the deicision boundary along with the 95% prediction intervals are shown below.
+The 95% confidence intervals and the data to plot decision boundaries are created.
 
-```{r}
-grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
+```{r calc_conf_intervals1}
+grid_dimension <- seq(0,1,by =0.01)
+grid <- expand.grid(x1=grid_dimension,x2 = grid_dimension)
 grid_preds <- predict(glm1,newdata=grid,type='response')
 
 preds_ci <-  predict(glm1,newdata=grid,type='link',se.fit=TRUE)
@@ -57,16 +57,25 @@ lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
 upr2 <- glm1$family$linkinv(upr)
 lwr2 <- glm1$family$linkinv(lwr)
 
+contour_data <- cbind(grid,lwr = lwr2,upr =upr2,pred = grid_preds)
+```
 
 
-nrow <- length(seq(0,1,by=0.01))
-plot(original_data$x1,original_data$x2,col=original_data$y,pch = 16,xlab='x1',ylab='x2',main = 'Original Data')
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.2,
-        col="cornflowerblue",lwd=2,drawlabels=FALSE,add=TRUE)
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(upr2,nrow =nrow),levels=0.2,
-        col="green",lwd=2,drawlabels=FALSE,add=TRUE,lty=2)
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(lwr2,nrow =nrow),levels=0.2,
-        col="green",lwd=2,drawlabels=FALSE,add = TRUE,lty=2)
+The plot the data and the decision boundary along with the 95% prediction intervals are shown below.
+
+
+```{r original_data_plot}
+
+
+library(ggplot2)
+p <- ggplot(original_data,aes(x=x1,y=x2))+geom_point(aes(colour = factor(y)),alpha =0.3)+labs(title='Original Data') + theme (legend.title = element_blank())
+p
+
+
+p+ stat_contour(data = contour_data,aes(x = x1,y = x2,z=pred),breaks=c(0.2))+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=lwr),breaks=c(0.2),linetype=2)+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=upr),breaks=c(0.2),linetype=2)
+
 
 ```
 
@@ -75,11 +84,11 @@ contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(lwr2,nrow =nrow),levels
 
 Now we oversample the minority class.
 
-```{r}
+```{r }
 
 minority_class <- subset(original_data,original_data$y==1)
 majority_class <- subset(original_data,original_data$y==0)
-oversamples <- minority_class[sample(c(1:nrow(minority_class)),60,replace = TRUE),]
+oversamples <- minority_class[sample(c(1:nrow(minority_class)),600,replace = TRUE),]
 oversampled_data <- rbind(oversamples,minority_class,majority_class)
 ```
 
@@ -92,7 +101,7 @@ summary(glm2)
 
 The plot is shown below with a 95% confidence limits.
 
-```{r}
+```{r oversampled_data_plot}
 grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
 grid_preds <- predict(glm2,newdata=grid,type='response')
 
@@ -107,19 +116,71 @@ lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
 
 #These are logits, use inverse link function to get probabilties
 
-upr2 <- glm1$family$linkinv(upr)
-lwr2 <-glm1$family$linkinv(lwr)
+upr2 <- glm3$family$linkinv(upr)
+lwr2 <-glm3$family$linkinv(lwr)
 
-nrow <- length(seq(0,1,by=0.01))
-plot(oversampled_data$x1,oversampled_data$x2,col=oversampled_data$y,pch = 16,xlab='x1',ylab='x2',main='Oversampled data')
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.5,
-        col="cornflowerblue",lwd=2,drawlabels=FALSE,add=TRUE)
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(upr2,nrow =nrow),levels=0.5,
-        col="green",lwd=2,drawlabels=FALSE,add=TRUE,lty=2)
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(lwr2,nrow =nrow),levels=0.5,
-        col="green",lwd=2,drawlabels=FALSE,add = TRUE,lty=2)
+contour_data <- cbind(grid,lwr = lwr2,upr =upr2,pred = grid_preds)
+
+
+p <- ggplot(oversampled_data,aes(x=x1,y=x2))+geom_point(aes(colour = factor(y)),alpha =0.3)+labs(title='Oversampled Data') + theme (legend.title = element_blank())
+
+
+
+p+ stat_contour(data = contour_data,aes(x = x1,y = x2,z=pred),breaks=c(0.2))+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=lwr),breaks=c(0.2),linetype=2)+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=upr),breaks=c(0.2),linetype=2)
 ```
 
+### Undersampled data
+
+Now we try undersampling the majority class. This is typically done only when the data is really big and the tools/infrastructure being used does not support really big data.
+
+
+```{r undersampled_data_plot}
+undersamples <- majority_class[sample(c(1:nrow(majority_class)),200,replace = TRUE),]
+undersampled_data <- rbind(minority_class,undersamples)
+
+```
+
+
+A third model is fitted on the undersampled data.
+```{r}
+glm3 <- glm(y ~ ., data = undersampled_data, family = 'binomial')
+summary(glm3)
+
+```
+
+The plot is shown below with a 95% confidence limits.
+
+```{r}
+grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
+grid_preds <- predict(glm3,newdata=grid,type='response')
+
+preds_ci <-  predict(glm3,newdata=grid,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds_ci$fit + (critval * preds_ci$se.fit)
+lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
+
+
+
+#These are logits, use inverse link function to get probabilties
+
+upr2 <- glm3$family$linkinv(upr)
+lwr2 <-glm3$family$linkinv(lwr)
+
+contour_data <- cbind(grid,lwr = lwr2,upr =upr2,pred = grid_preds)
+
+
+p <- ggplot(undersampled_data,aes(x=x1,y=x2))+geom_point(aes(colour = factor(y)),alpha =0.3)+labs(title='Undersampled Data') + theme (legend.title = element_blank())
+
+
+
+p+ stat_contour(data = contour_data,aes(x = x1,y = x2,z=pred),breaks=c(0.2))+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=lwr),breaks=c(0.2),linetype=2)+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=upr),breaks=c(0.2),linetype=2)
+```
 ## Case 2: When your model is not a good fit for your data
 
 Now consider the case when the model is not a good fit for the data.
@@ -128,35 +189,55 @@ Now consider the case when the model is not a good fit for the data.
 
 ```{r}
 set.seed(0)
-c1 <- cbind('x1'=c(rnorm(10,0.6,0.15),rnorm(10,0.2,0.15)),'x2'=c(rnorm(10,0.4,0.15),rnorm(10,0.8,0.15)))
-c2 <- cbind('x1'=rnorm(80,0.4,0.15),'x2'=rnorm(80,0.6,0.15))
+#class 1
+c1 <- cbind('x1'=c(rnorm(100,0.2,0.1),rnorm(100,0.8,0.1)),
+            'x2'=c(rnorm(100,0.8,0.1),rnorm(100,0.2,0.1)))
+#class2
+c2 <- cbind('x1'=rnorm(800,0.5,0.1),'x2'=rnorm(800,0.5,0.1))
 
 original_data2 <- data.frame(rbind(c1,c2))
-original_data2$y <- as.factor(c(rep(1,20),rep(0,80)))
+original_data2$y <- as.factor(c(rep(1,200),rep(0,800)))
 
 ```
 
 
 A model is fitted on the original data.
 ```{r}
-glm3 <- glm(y ~ ., data = original_data2, family = 'binomial')
-summary(glm3)
+glm4 <- glm(y ~ ., data = original_data2, family = 'binomial')
+summary(glm4)
 
 ```
 
 
 The plot is shown below
 
-```{r}
-grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
-grid_preds <- predict(glm3,newdata=grid,type='response')
+```{r original_data_plot2,warning=FALSE,message=FALSE}
+grid_preds <- predict(glm4,newdata=grid,type='response')
+
+preds_ci <-  predict(glm4,newdata=grid,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds_ci$fit + (critval * preds_ci$se.fit)
+lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
 
 
 
-nrow <- length(seq(0,1,by=0.01))
-plot(original_data2$x1,original_data2$x2,col=original_data2$y,pch = 16,xlab='x1',ylab='x2',main='Original Data')
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.2,
-        col="cornflowerblue",lwd=2,drawlabels=FALSE,add=TRUE)
+#These are logits, use inverse link function to get probabilties
+
+upr2 <- glm4$family$linkinv(upr)
+lwr2 <-glm4$family$linkinv(lwr)
+
+contour_data <- cbind(grid,lwr = lwr2,upr =upr2,pred = grid_preds)
+
+
+p <- ggplot(original_data2,aes(x=x1,y=x2))+geom_point(aes(colour = factor(y)),alpha =0.3)+labs(title='Original Data') + theme (legend.title = element_blank())
+
+
+
+p+ stat_contour(data = contour_data,aes(x = x1,y = x2,z=pred),breaks=c(0.2))+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=lwr),breaks=c(0.2),linetype=2)+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=upr),breaks=c(0.2),linetype=2)
 
 ```
 
@@ -169,25 +250,100 @@ Now we oversample the minority class.
 
 minority_class <- subset(original_data2,original_data2$y==1)
 majority_class <- subset(original_data2,original_data2$y==0)
-oversamples <- minority_class[sample(c(1:nrow(minority_class)),60,replace = TRUE),]
+oversamples <- minority_class[sample(c(1:nrow(minority_class)),600,replace = TRUE),]
 oversampled_data2 <- rbind(oversamples,minority_class,majority_class)
 ```
 
 A second model is fitted on the oversampled data.
 ```{r}
-glm4 <- glm(y ~ ., data = oversampled_data2, family = 'binomial')
-summary(glm4)
+glm5 <- glm(y ~ ., data = oversampled_data2, family = 'binomial')
+summary(glm5)
 
 ```
 
 
 The plot is shown below
 
-```{r}
+```{r oversampeld_data_plot2, warning=FALSE,message=FALSE}
 grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
-grid_preds <- predict(glm4,newdata=grid,type='response')
-nrow <- length(seq(0,1,by=0.01))
-contour(x=seq(0,1,by=0.01), y=seq(0,1,by=0.01), z=matrix(grid_preds,nrow =nrow),levels=0.5,
-        col="cornflowerblue",lwd=2,drawlabels=FALSE)
-points(oversampled_data2$x1,oversampled_data2$x2,col=oversampled_data2$y,pch = 16)
+grid_preds <- predict(glm5,newdata=grid,type='response')
+
+preds_ci <-  predict(glm5,newdata=grid,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds_ci$fit + (critval * preds_ci$se.fit)
+lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
+
+
+
+#These are logits, use inverse link function to get probabilties
+
+upr2 <- glm5$family$linkinv(upr)
+lwr2 <-glm5$family$linkinv(lwr)
+
+contour_data <- cbind(grid,lwr = lwr2,upr =upr2,pred = grid_preds)
+
+
+p <- ggplot(oversampled_data2,aes(x=x1,y=x2))+geom_point(aes(colour = factor(y)),alpha =0.3)+labs(title='Oversampled Data') + theme (legend.title = element_blank())
+
+
+
+p+ stat_contour(data = contour_data,aes(x = x1,y = x2,z=pred),breaks=c(0.5))+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=lwr),breaks=c(0.5),linetype=2)+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=upr),breaks=c(0.5),linetype=2)
+```
+
+
+### Undersampled Data
+
+Now we oversample the minority class.
+
+
+
+```{r }
+undersamples <- majority_class[sample(c(1:nrow(majority_class)),200,replace = TRUE),]
+undersampled_data2 <- rbind(minority_class,undersamples)
+
+```
+
+
+A second model is fitted on the oversampled data.
+```{r}
+glm6 <- glm(y ~ ., data = undersampled_data2, family = 'binomial')
+summary(glm6)
+
+```
+
+
+The plot is shown below
+
+```{r undersampled_data_plot2, warning=FALSE,message=FALSE}
+grid <- expand.grid(x1=seq(0,1,by=0.01),x2 = seq(0,1,by=0.01))
+grid_preds <- predict(glm6,newdata=grid,type='response')
+
+preds_ci <-  predict(glm6,newdata=grid,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds_ci$fit + (critval * preds_ci$se.fit)
+lwr <- preds_ci$fit - (critval * preds_ci$se.fit)
+
+
+
+#These are logits, use inverse link function to get probabilties
+
+upr2 <- glm6$family$linkinv(upr)
+lwr2 <-glm6$family$linkinv(lwr)
+
+contour_data <- cbind(grid,lwr = lwr2,upr =upr2,pred = grid_preds)
+
+
+p <- ggplot(undersampled_data2,aes(x=x1,y=x2))+geom_point(aes(colour = factor(y)),alpha =0.3)+labs(title='UnderSampled Data') + theme (legend.title = element_blank())
+
+
+
+p+ stat_contour(data = contour_data,aes(x = x1,y = x2,z=pred),breaks=c(0.5))+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=lwr),breaks=c(0.5),linetype=2)+
+        stat_contour(data = contour_data,aes(x = x1,y = x2,z=upr),breaks=c(0.5),linetype=2)
 ```
