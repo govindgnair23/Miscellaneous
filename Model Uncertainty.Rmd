@@ -1,0 +1,360 @@
+---
+title: "Incorporating Uncertainty in Model Predictions"
+author: "Govind Nair"
+date: "12/6/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This document demonstrates how  to incorporate  uncertainty into model predictions, describes how this can surface  limitations in the data used and  how this can provide guidance on when the model can be used with confidence.
+
+
+## Data
+
+I will use the iris dataset with the goal of classifying each record as either virginica or not-virginica. Only two variables - Sepal Length and Petal Width will be used.
+
+```{r message=FALSE}
+attach(iris)
+iris$label = as.factor(ifelse(iris$Species=='virginica',1,0))
+iris2 <- iris[,c('Sepal.Length','Petal.Width','label')]
+head(iris2)
+```
+
+A plot of the data is shown below.
+
+```{r}
+plot(iris2[,c(1,2)],col=iris$label,pch = 16)
+legend('bottomright',legend=c('virginica','not virginica'),
+       col=c('red','black'),pch =c(16,16),bty="n")
+```
+
+## Model
+
+A simple logistic regression model is fit to the data. 
+
+
+```{r}
+glm1 <- glm(label ~ ., data = iris2,family = 'binomial')
+summary(glm1)
+```
+The resulting decision boundary is also plotted below. We are interested in learning how the uncertainty in prediction varies between the five points A, B, C ,D and E.
+
+```{r , message=FALSE , warning=FALSE}
+#Grid for getting predictions
+grid <- expand.grid(Sepal.Length =seq(0,8,by=0.1),Petal.Width = seq(0,8,by=0.1))
+grid_preds <- predict(glm1,newdata=grid,type='response')
+contour(x=seq(0,8,by=0.1), y=seq(0,8,by=0.1), z=matrix(grid_preds,nrow =81),levels=0.5,
+        col="cornflowerblue",lwd=2,drawlabels=FALSE)
+points(iris2[,1],iris2[,2],col=iris$label,pch = 16)
+points(x = c(7,5,2,2,7), y = c(2,2,2,7,7),pch=4,cex =2)
+text(x = c(7.25,5.25,2.25,2.25,7.25), y = c(2.25,2.25,2.25,7.25,7.25),
+     labels=c('A','B','C','D','E'))
+
+```
+
+## Frequentist Prediction Intervals
+
+
+We create prediction intervals using the approach described [here](https://stackoverflow.com/questions/14423325/confidence-intervals-for-predictions-from-logistic-regression)
+
+
+
+```{r}
+newdata <- data.frame(Sepal.Length = c(7,5,2,2,7), Petal.Width = c(2,2,2,7,7))
+preds <-  predict(glm1,newdata=newdata,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds$fit + (critval * preds$se.fit)
+lwr <- preds$fit - (critval * preds$se.fit)
+fit <- preds$fit
+
+
+#These are logits, use inverse link function to get probabilties
+fit2 <- glm1$family$linkinv(fit)
+upr2 <- glm1$family$linkinv(upr)
+lwr2 <- glm1$family$linkinv(lwr)
+
+results <- data.frame(label=c('A','B','C','D','E'),mean = fit2,lb = lwr2,ub =upr2)
+print(results)
+```
+
+All 5 points are predicted to be virginica with a very high probability given they fall on one side of the decision boundary. However the width of the prediction intervals for these five points vary considerably. The points D and E are so far away from the decision boundary that there is little uncertainty in the predictions, the points A,B and C are more interesting.
+
+
+```{r}
+library(ggplot2)
+ggplot() + geom_errorbar(data=results,mapping=aes(x=label,ymin=lb,ymax=ub),
+                         width =0.2,size=1,color='blue')+
+  geom_point(data=results,mapping = aes(x=label,y=mean),size=2,shape=21,fill='white')
+```
+
+For point A, the model indicates fairly high confidence in its predictions, however for point C, the prediction interval indicates that model has very little confidence in the prediction although the point estimate is a high 0.96.
+
+If the threshold for making a decision is 0.8, for a decision point corresponding to point C, a decision will be made even though the model has very little confidence in it's prediction.
+
+
+However, it is important to keep in mind that a frequentist 95% prediction interval only means that in the context of repeated  trials, 95% of such prediction intervals will contain the true predicted value.Given this interpretation of the prediction interval, there are 
+two ways this can be used.
+
+
+1) Provide the prediction interval for each prediction for downstream analysis and review
+
+2) Get the width of the prediction intervals for a grid of points and specify this is the optimal operating region for the model.
+
+Below we identify the region where the width of the prediction interval is greater than 0.25
+
+```{r}
+grid <- expand.grid(Sepal.Length =seq(0,8,by=0.1),Petal.Width = seq(0,8,by=0.1))
+preds <-  predict(glm1,newdata=grid,type='link',se.fit=TRUE)
+
+#Calculate 95% prediction interval bounds
+critval <- 1.96 ## approx 95% CI
+upr <- preds$fit + (critval * preds$se.fit)
+lwr <- preds$fit - (critval * preds$se.fit)
+fit <- preds$fit
+
+
+#These are logits, use inverse link function to get probabilties
+fit2 <- glm1$family$linkinv(fit)
+upr2 <- glm1$family$linkinv(upr)
+lwr2 <- glm1$family$linkinv(lwr)
+
+ci_width <- upr2 - lwr2
+
+operating_region <- cbind(grid,ci_width)
+operating_region$ci_flag <- ifelse(operating_region$ci_width < 0.25,1,0)
+contour(x=seq(0,8,by=0.1), y=seq(0,8,by=0.1), z=matrix(operating_region$ci_flag,
+                                                       nrow =81),levels=1,
+        col="green",lwd=2,drawlabels=TRUE)
+points(iris2[,1],iris2[,2],col=iris$label,pch = 16)
+
+```
+
+The region between the two green lines above represents the region where the model's prediction does not have the required degree of confidence, this region represents the region where the model's predictions  should not be used for making decisions.
+
+## Bayesian Prediction Intervals
+
+An alternative way to incorporate uncertainty is by using bayesian models.Bayesian prediction intervals have a probabilistic interpretation. If the 95% bayesian prediction interval for a new data point is between 0.75 and 0.85, it is justified in concluding that there there is a 95% probability that the true value is between 0.75 and 0.85 according to the model. This means instead of defining a score threshold for the model based on point estimates, we can define a score threshold using the prediction interval itself.
+
+We can define the score threshold such that the entire 95% prediction interval should be greater that score threshold.
+
+A bayesian logistic regression model is specified and fitted below.
+```{r, message=FALSE, warning=FALSE}
+library(rstan)
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+library(rstanarm)
+
+bayes_glm1 <- stan_glm(label ~ . , data = iris2,
+                       family = binomial(link = "logit"),
+                       prior = normal(0,25) , prior_intercept = normal(0,25),QR=TRUE)
+
+
+```
+
+
+
+The 95% credible intervals on the model parameters are given by
+```{r}
+posterior_interval(bayes_glm1,prob=0.95)
+```
+
+Model predictions on new data points are computed below
+
+```{r}
+newdata <- data.frame(Sepal.Length = c(7,5,2,2,7), Petal.Width = c(2,2,2,7,7))
+new_pred_means <- posterior_linpred(bayes_glm1,transform=TRUE,newdata=newdata)
+
+###Get 95 %  credible intervals intervals
+p_2.5 <- apply(new_pred_means,2,function(x){ quantile(x,0.025)})
+p_97.5 <- apply(new_pred_means,2,function(x){ quantile(x,0.975)})
+median <- apply(new_pred_means,2,function(x){ quantile(x,0.5)})
+
+results <- data.frame(label=c('A','B','C','D','E'),median = median ,lb = p_2.5,ub=p_97.5)
+print(results)
+```
+
+The bayesian prediction/credible intervals for the five points are shown below
+
+```{r}
+library(ggplot2)
+ggplot() + geom_errorbar(data=results,mapping=aes(x=label,ymin=lb,ymax=ub),
+                         width =0.2,size=1,color='blue')+
+  geom_point(data=results,mapping = aes(x=label,y=median),size=2,shape=21,fill='white')
+```
+
+Using the posterior predictive distribution, the probability mass of the distribution exceeding some threhsold can alo be computed as shown below. Assume the threshold is 0.8
+
+```{r}
+calc_prob <- function(v,t){
+  #Get no of prediction exceeding threshold
+  e <- sum(v>t);
+  return(e/length(v))
+}
+
+probs <- apply(new_pred_means,2,calc_prob,0.8)
+names(probs) <- LETTERS[1:5]
+print(probs)
+```
+
+This can allow us to set thresholds like,the posterior predictive distribution should have a probability mass of 0.5 exceeding the chosen threshold. 
+
+
+
+## Bayesian Models for Imbalanced Datasets
+
+Bayesian models can also be useful in rare event modelling by incorporating uncertainty resulting from the fact that a certain class is very rare into model estimates and predictions.
+
+Consider the model built on the original data below which has a higher proportion of 'negative'.
+
+```{r , message = FALSE, warning = FALSE}
+library(RKEEL)
+imb_data <- read.keel(file = 'page-blocks0.dat')
+imb_data[,c(1:10)] <- as.data.frame(lapply(imb_data[,c(1:10)],as.numeric))
+imb_data <- na.omit(imb_data)
+summary(imb_data$Class)
+
+```
+
+
+A bayesian logistic regression model is built on this imbalanced data set. Only 2 features are used for simplicity.
+
+```{r , message = FALSE, warning = FALSE}
+library(rstanarm)
+library(bayesplot)
+
+bayes_glm2 <- stan_glm(Class ~ Height + P_black , data = imb_data,
+                       family = binomial(link = "logit"),QR=TRUE)
+
+```
+
+The 95% credible interval of the model coefficients are given below
+
+```{r}
+posterior_interval(bayes_glm2,prob=0.95)
+
+```
+
+
+This is visualized below
+
+```{r ,message=FALSE, warning = FALSE}
+
+posterior_ub <- as.array(bayes_glm2)
+color_scheme_set("red")
+mcmc_intervals(posterior_ub,prob = 0.95,pars = c('Height','P_black'))
+
+```
+
+Now consider rebalanced dataset - using oversampling.
+
+```{r, message = FALSE, warning = FALSE}
+library(ROSE)
+bal_data_over <- ovun.sample(Class~Height + P_black, data = imb_data,
+                        p = 0.5 , seed = 1 , method = 'over')$data
+
+
+summary(bal_data_over$Class)
+```
+
+The same model is now fit to this rebalanced data.
+```{r}
+
+bayes_glm3 <- stan_glm(Class ~ Height + P_black , data = bal_data_over,
+                       family = binomial(link = "logit"),QR=TRUE)
+```
+
+
+The 95% credible interval of the model coefficients are given below
+
+```{r}
+posterior_interval(bayes_glm3,prob=0.95)
+
+```
+
+
+This is visualized below
+
+```{r ,message=FALSE, warning = FALSE}
+
+posterior_ub <- as.array(bayes_glm3)
+color_scheme_set("red")
+mcmc_intervals(posterior_ub,prob = 0.95,pars = c('Height','P_black'))
+
+```
+
+Also consider a dataset rebalanced by undersampling.
+
+
+
+```{r, message = FALSE, warning = FALSE}
+library(ROSE)
+bal_data_under <- ovun.sample(Class~Height + P_black, data = imb_data,
+                        p = 0.5 , seed = 1 , method = 'under')$data
+
+
+summary(bal_data_under$Class)
+```
+
+The same model is now fit to this rebalanced data.
+```{r}
+
+bayes_glm4 <- stan_glm(Class ~ Height + P_black , data = bal_data_under,
+                       family = binomial(link = "logit"),QR=TRUE)
+```
+
+
+The 95% credible interval of the model coefficients are given below
+
+```{r}
+posterior_interval(bayes_glm4,prob=0.95)
+
+```
+
+
+This is visualized below
+
+```{r ,message=FALSE, warning = FALSE}
+
+posterior_bal <- as.array(bayes_glm4)
+color_scheme_set("red")
+mcmc_intervals(posterior_bal,prob = 0.95,pars = c('Height','P_black'))
+
+```
+
+
+It can be seen from the figure above that the width of the credible interval has has actually expanded when using this dataset that has been re-balanced by undersampling.
+
+Now consider the prediction on a new data point from each of these three models.
+
+```{r}
+newdata <- data.frame(Height = c(110), P_black = c(750))
+pred_imb <- posterior_linpred(bayes_glm2,transform=TRUE,newdata=newdata)
+pred_over <- posterior_linpred(bayes_glm3,transform=TRUE,newdata=newdata)
+pred_under <- posterior_linpred(bayes_glm4,transform=TRUE,newdata=newdata)
+
+preds_all <- cbind(pred_imb,pred_over,pred_under)
+
+###Get 95 %  credible intervals intervals
+p_2.5 <- apply(preds_all,2,function(x){ quantile(x,0.025)})
+p_97.5 <- apply(preds_all,2,function(x){ quantile(x,0.975)})
+median <- apply(preds_all,2,function(x){ quantile(x,0.5)})
+
+pred_intervals <- data.frame(cbind(p_2.5,p_97.5,median))
+pred_intervals$data <- c('imbalanced','over sampled','under sampled')
+
+ggplot() + geom_errorbar(data=pred_intervals,mapping=aes(x=data,ymin=p_2.5,ymax=p_97.5),
+                         width =0.2,size=1,color='blue')+
+  geom_point(data=pred_intervals,mapping=aes(x=data,y=median),size=2,
+             shape=21,fill='white')
+
+```
+
+As seen above the width of the prediction interval resulting from using training data with different volumes of the target class is different. The main takeaway is that while building models on rare event data, the fact that the rare incidence of a class leads to greater prediciton uncertainty neeeds to be considered.
+
